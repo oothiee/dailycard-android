@@ -14,8 +14,10 @@ permissions:
 
 jobs:
   build:
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
+    # Ubuntu 24.04 is pinned on purpose: the ubuntu-latest label is being
+    # migrated to Ubuntu 26.04 and that migration changes preinstalled tools.
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
     env:
       DAILYCARD_KEYSTORE_BASE64: ${{ secrets.DAILYCARD_KEYSTORE_BASE64 }}
       DAILYCARD_KEYSTORE_PASSWORD: ${{ secrets.DAILYCARD_KEYSTORE_PASSWORD }}
@@ -24,14 +26,13 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Set up JDK 17
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: '17'
-          cache: gradle
 
       - name: Set up Android SDK
         uses: android-actions/setup-android@v4
@@ -39,10 +40,13 @@ jobs:
       - name: Install Android SDK packages
         run: |
           yes | sdkmanager --licenses > /dev/null || true
-          yes | sdkmanager --install "platforms;android-34" "build-tools;34.0.0"
+          sdkmanager --install "platforms;android-34" "build-tools;34.0.0"
 
-      - name: Make Gradle wrapper executable
-        run: chmod +x gradlew
+      - name: Check toolchain
+        run: |
+          java -version
+          chmod +x gradlew
+          ./gradlew --version
 
       - name: Build APK
         shell: bash
@@ -54,20 +58,22 @@ jobs:
              [ -n "${DAILYCARD_KEYSTORE_PASSWORD:-}" ] &&
              [ -n "${DAILYCARD_KEY_ALIAS:-}" ] &&
              [ -n "${DAILYCARD_KEY_PASSWORD:-}" ]; then
-            echo "Building signed release APK"
+            echo "Signing secrets found: building signed release APK"
             echo "$DAILYCARD_KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/dailycard-release.jks"
             export DAILYCARD_KEYSTORE="$RUNNER_TEMP/dailycard-release.jks"
             echo "DAILYCARD_KEYSTORE=$DAILYCARD_KEYSTORE" >> "$GITHUB_ENV"
-            ./gradlew --no-daemon --stacktrace assembleRelease
+            ./gradlew --no-daemon --stacktrace --console=plain assembleRelease
             cp app/build/outputs/apk/release/app-release.apk dist/Dailycard.apk
           else
-            echo "Signing secrets are not configured; building installable debug APK"
-            ./gradlew --no-daemon --stacktrace assembleDebug
+            echo "No signing secrets: building installable debug APK"
+            ./gradlew --no-daemon --stacktrace --console=plain assembleDebug
             cp app/build/outputs/apk/debug/app-debug.apk dist/Dailycard.apk
           fi
 
+          ls -l dist
+
       - name: Upload APK artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: Dailycard-APK
           path: dist/Dailycard.apk
