@@ -1,0 +1,81 @@
+name: Build Dailycard APK
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+      - master
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      DAILYCARD_KEYSTORE_BASE64: ${{ secrets.DAILYCARD_KEYSTORE_BASE64 }}
+      DAILYCARD_KEYSTORE_PASSWORD: ${{ secrets.DAILYCARD_KEYSTORE_PASSWORD }}
+      DAILYCARD_KEY_ALIAS: ${{ secrets.DAILYCARD_KEY_ALIAS }}
+      DAILYCARD_KEY_PASSWORD: ${{ secrets.DAILYCARD_KEY_PASSWORD }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: gradle
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v4
+
+      - name: Install Android SDK packages
+        run: |
+          yes | sdkmanager --licenses > /dev/null || true
+          yes | sdkmanager --install "platforms;android-34" "build-tools;34.0.0"
+
+      - name: Make Gradle wrapper executable
+        run: chmod +x gradlew
+
+      - name: Build APK
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+
+          if [ -n "${DAILYCARD_KEYSTORE_BASE64:-}" ] &&
+             [ -n "${DAILYCARD_KEYSTORE_PASSWORD:-}" ] &&
+             [ -n "${DAILYCARD_KEY_ALIAS:-}" ] &&
+             [ -n "${DAILYCARD_KEY_PASSWORD:-}" ]; then
+            echo "Building signed release APK"
+            echo "$DAILYCARD_KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/dailycard-release.jks"
+            export DAILYCARD_KEYSTORE="$RUNNER_TEMP/dailycard-release.jks"
+            echo "DAILYCARD_KEYSTORE=$DAILYCARD_KEYSTORE" >> "$GITHUB_ENV"
+            ./gradlew --no-daemon --stacktrace assembleRelease
+            cp app/build/outputs/apk/release/app-release.apk dist/Dailycard.apk
+          else
+            echo "Signing secrets are not configured; building installable debug APK"
+            ./gradlew --no-daemon --stacktrace assembleDebug
+            cp app/build/outputs/apk/debug/app-debug.apk dist/Dailycard.apk
+          fi
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Dailycard-APK
+          path: dist/Dailycard.apk
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Attach APK to GitHub Release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/Dailycard.apk
